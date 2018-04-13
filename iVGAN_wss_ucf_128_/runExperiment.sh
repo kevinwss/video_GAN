@@ -1,0 +1,33 @@
+##!/bin/bash
+#
+## otherwise the default shell would be used
+#$ -S /bin/bash
+#
+## Use GPU
+#$ -l gpu
+#
+## <= 2h is short queue, <= 24h is middle queue, <= 120 h is long queue
+#$ -l h_rt=24:00:00
+#
+## the maximum memory usage of this job, (below 4G does not make much sense)
+#$ -l h_vmem=70G
+#
+## stderr and stdout are merged together to stdout
+#$ -j y
+#
+# logging directory. preferrably on your scratch
+#$ -o /scratch_net/boyscouts/kratzwab/experiments
+
+# if you need to export custom libs, you can do that here
+
+export SGE_GPU_ALL="$(ls -rt /tmp/lock-gpu*/info.txt | xargs grep -h  $(whoami) | awk '{print $2}' | paste -sd "," -)"
+export SGE_GPU=$(echo $SGE_GPU_ALL |rev|cut -d, -f1|rev) # USE LAST GPU by request time
+echo "SGE gpu=$SGE_GPU_ALL available"
+echo "SGE gpu=$SGE_GPU allocated in this use"
+
+
+#CUDA_VISIBLE_DEVICES=0 python main_train.py --experiment_name=iWGAN_future_alternating --mode=predict --recover_model=False --batch_size=64 --crop_size=64 --learning_rate=0.0002 --root_dir=../frames-stable-many --index_file=golf.txt
+ 
+CUDA_VISIBLE_DEVICES=0 python main_train.py --experiment_name=iWGAN_generate --mode=generate --recover_model=False --batch_size=64 --crop_size=128 --learning_rate=0.0002  --use_two_stream=False  --root_dir=../data/ucf_sports_actions --index_file=index.txt
+
+#python main_train.py --experiment_name=iWGAN_inpaint --mode=inpaint --recover_model=True --batch_size=32 --crop_size=64 --learning_rate=0.0002 --root_dir=../frames-stable-many --index_file=golf.txt
