@@ -88,26 +88,27 @@ def load_images(filename, size=-1):
     
     return dset
 
-
+def load_model(saver,sess, checkpoint_dir):
+    latest_cp = tf.train.latest_checkpoint(checkpoint_dir)
+    print(latest_cp)
+    saver.restore(sess, latest_cp)
 #----------for lstm--------------------
 
 def get_image_z(datasets):
-		
-        with self.sess.as_default():
-            self.saver = tf.train.Saver()
-            if self.resume is not None:
-                print('Resume model: %s' % self.resume)
-                self.load_model(self.resume)
-            else:
-                print("Model not resumed")
-                sys.exit() 
-
+        sess = tf.Session()
+        with sess.as_default():
+            saver = tf.train.Saver()
+         
+            print('Resume model: %s' % self.resume)
+            checkpoint_dir = "output/cvaegan/checkpoints/"
+            load_model(saver,sess,checkpoint_dir)
+            
             images = datasets.images
             #np.save("datasets_images.npy",datasets.images)
             #np.save("datasets_attr.npy",datasets.images)
             attrs = datasets.attrs
             # image_z (2700*256) 
-            image_z ,z_avg,z_log_var = self.sess.run(    
+            image_z ,z_avg,z_log_var = sess.run(    
                 [self.z_f,self.z_avg, self.z_log_var],
                 feed_dict={
                     self.x_r: images, self.c_r:attrs
@@ -190,7 +191,9 @@ def get_batch(train_data, batchsize = 5):
         
         # encoder_inputs_
         for data in batch_train_data:
-            encoder_inputs_.append([data[0]]  )
+            transformed_data = np.concatenate(([data[0]], [pad]*(max_length-1)) , axis = 0)
+			
+            encoder_inputs_.append(transformed_data  )
        
         # decoder_targets_    s+1+0
         for index in batch_train_data:  # cut
@@ -222,36 +225,37 @@ def get_batch(train_data, batchsize = 5):
         #decoder_targets_ = np.array([[EOS] + (sequence) for sequence in batch_train_data])
         encoder_inputs_ = np.array(encoder_inputs_)
         decoder_inputs_ = np.stack(decoder_inputs_,axis = 0)
-        print(decoder_inputs_)
+        #print(decoder_inputs_)
         decoder_targets_ = np.stack(decoder_targets_,axis = 0)
         
         encoder_inputs_ = encoder_inputs_.swapaxes(0, 1)
         decoder_inputs_  = decoder_inputs_.swapaxes(0, 1)
         decoder_targets_ = decoder_targets_.swapaxes(0, 1)
-
+        '''
         print("encoder_inputs_",encoder_inputs_.shape,encoder_inputs_)
         print("decoder_inputs_",decoder_inputs_.shape,decoder_inputs_)
         print("decoder_targets_",decoder_targets_.shape,decoder_targets_)
-        
-        #return encoder_inputs_ ,decoder_inputs_,decoder_targets_
+        '''
+        return encoder_inputs_ ,decoder_inputs_,decoder_targets_
 
 
 def trainLSTM(train_data):
+        #encoder_inputs_,decoder_inputs_,decoder_targets_ = train_data[0],train_data[1],train_data[2]
         tf.reset_default_graph()
         sess = tf.InteractiveSession()
        
-        vocab_size = 10
+        vocab_size = 256  # 
         input_embedding_size = 20
         dim = 256
-        encoder_hidden_units = 101
+        encoder_hidden_units = 256
         decoder_hidden_units = encoder_hidden_units
     
-        encoder_inputs = tf.placeholder(shape=(None, None,dim), dtype=tf.int32, name='encoder_inputs') #modify shape to input image
-        decoder_targets = tf.placeholder(shape=(None, None,dim), dtype=tf.int32, name='decoder_targets')
-        decoder_inputs = tf.placeholder(shape=(None, None,dim), dtype=tf.int32, name='decoder_inputs')
+        encoder_inputs = tf.placeholder(shape=(None, None,dim), dtype=tf.float32, name='encoder_inputs') #modify shape to input image
+        decoder_targets = tf.placeholder(shape=(None, None,dim), dtype=tf.float32, name='decoder_targets')
+        decoder_inputs = tf.placeholder(shape=(None, None,dim), dtype=tf.float32, name='decoder_inputs')
         
-        decoder_inputs_embedded = encoder_inputs
-        encoder_inputs_embedded = decoder_inputs
+        encoder_inputs_embedded = encoder_inputs
+        decoder_inputs_embedded = decoder_inputs
         # encoder
 
         encoder_cell = tf.contrib.rnn.LSTMCell(encoder_hidden_units)
@@ -270,14 +274,16 @@ def trainLSTM(train_data):
         initial_state=encoder_final_state,
         dtype=tf.float32, time_major=True, scope="plain_decoder",
         )
-
+        # decoder_outputs : shape(time,batch,embedding_length)
+       
         #optimizer
-        decoder_logits = tf.contrib.layers.linear(decoder_outputs, vocab_size)
-        decoder_prediction = tf.argmax(decoder_logits, 2)
+        #decoder_logits = tf.contrib.layers.linear(decoder_outputs, vocab_size)
+        #decoder_prediction = tf.argmax(decoder_logits, 2)
 
         stepwise_cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
-        labels=tf.one_hot(decoder_targets, depth=vocab_size, dtype=tf.float32),
-        logits=decoder_logits,
+        #labels=tf.one_hot(decoder_targets, depth=vocab_size, dtype=tf.float32),
+        labels = decoder_targets,
+        logits= decoder_outputs,
         )
 
         loss = tf.reduce_mean(stepwise_cross_entropy)
@@ -290,21 +296,30 @@ def trainLSTM(train_data):
         batch_size = 5
         loss_track = []
 
-        max_batches = 3001
-        batches_in_epoch = 1000
-
+        max_batches = 301   #5001
+        batches_in_epoch = 100
+        save_interval = 500
+        saver = tf.train.Saver()
+        model_file = './LSTMModel'
+        if not os.path.isdir(model_file):
+            os.makedirs(model_file)
+     
         try:
             for batch in range(max_batches):
                 encoder_inputs_ , decoder_inputs_ , decoder_targets_ = get_batch(train_data)
-           
-                _, l = sess.run([train_op, loss], {encoder_inputs: encoder_inputs_,
-                                               decoder_inputs: decoder_inputs_,
-                                               decoder_targets: decoder_targets_})
+                feed = {encoder_inputs: encoder_inputs_,
+                        decoder_inputs: decoder_inputs_,
+                        decoder_targets: decoder_targets_}
+                _, l = sess.run([train_op, loss], feed)
                 loss_track.append(l)
 
                 if batch == 0 or batch % batches_in_epoch == 0:
                     print('batch {}'.format(batch))
-                    print('  minibatch loss: {}'.format(sess.run(loss, fd)))
+                    print('  minibatch loss: {}'.format(sess.run(loss, feed)))
+                
+                if batch != 0 and batch % save_interval== 0:
+                    saver.save(sess, model_file)  
+                    '''
                     predict_ = sess.run(decoder_prediction, fd)
                     for i, (inp, pred) in enumerate(zip(fd[encoder_inputs].T, predict_.T)):
                         print('  sample {}:'.format(i + 1))
@@ -312,12 +327,27 @@ def trainLSTM(train_data):
                         print('    predicted > {}'.format(pred))
                         if i >= 2:
                             break
+                    '''
                     print()
         except KeyboardInterrupt:
             print('training interrupted')
             
-            
-            
+        return sess    
+     
+def predict(model,sess_lstm):
+	
+	
+	
+	model.predict(sess_lstm)
+	'''
+    z_f = sample_normal(z_avg, z_log_var)
+    gan_sess = tf.Session()
+    checkpoint_dir = "output/cvaegan/checkpoints/"
+    latest_cp = tf.train.latest_checkpoint(checkpoint_dir)
+    print(latest_cp)
+    self.saver.restore(self.sess, latest_cp)
+    '''
+    pass            
          
 #--------------------------------------------------
 
@@ -345,7 +375,7 @@ def main(_):
     # Make output direcotiry if not exists
     if not os.path.isdir(args.output):
         os.mkdir(args.output)
-    '''
+    
     # Load datasets
     if args.dataset == 'mnist':
         datasets = mnist.load_data()
@@ -363,7 +393,7 @@ def main(_):
 #--------------------------------------------------------
     print("input_shape",datasets.shape[1:])
 #--------------------------------------------------------
-
+    
     model = models[args.model](
         batchsize=args.batchsize,
         input_shape=datasets.shape[1:],
@@ -382,14 +412,14 @@ def main(_):
     datasets.images = datasets.images.astype('float32') * 2.0 - 1.0
     #--------------------------
     print("datasets.images",datasets.images.shape)
-    '''
-    #image_z = model.get_image_z(datasets)
+    
+    image_z = model.get_image_z(datasets)
     image_z = np.load("image_z.npy")
-    train_data = reshape(image_z)
-    get_batch(train_data)
+    #train_data = reshape(image_z)
+    #get_batch(train_data)
     #batch = get_batch(train_data)
-    #trainLSTM(batch)
+    sess_lstm = trainLSTM(train_data)
     #print("batch.shape", batch.shape)
-     
+    model.predict(sess_lstm)
 if __name__ == '__main__':
     tf.app.run(main)
