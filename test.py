@@ -13,6 +13,8 @@ import cv2
 from models import *
 from datasets import load_data, mnist, svhn
 
+import imageio
+
 models = {
     'vae': VAE,
     'dcgan': DCGAN,
@@ -39,12 +41,22 @@ class Dataset(object):
 
     shape = property(_get_shape)
 
+
+#--------------------------------
+
 class ConditionalDataset(Dataset):
     def __init__(self):
         super(ConditionalDataset, self).__init__()
         self.attrs = None
         self.attr_names = None
-        
+
+def load_data_from_npy():
+    dset = ConditionalDataset()
+    dset.images = np.load("datasets_images.npy")
+    dset.attrs = np.load("datasets_images_attrs.npy")
+    dset.attr_names = ["N"]
+    return dset
+
 def load_images(filename, size=-1):
     dset = ConditionalDataset()
     path = "../data/ucf_sports_actions"
@@ -81,6 +93,7 @@ def load_images(filename, size=-1):
     images = np.stack(images,axis = 0)
     attrs = np.stack(attrs,axis = 0)
     #np.save("ucf_64.npy",images)
+    #np.save("datasets_images_attrs.npy",attrs)
     print(images.shape)
     dset.images = images
     dset.attrs = attrs
@@ -238,6 +251,8 @@ def get_batch(train_data, batchsize = 5):
         '''
         return encoder_inputs_ ,decoder_inputs_,decoder_targets_
 
+	
+
 
 def trainLSTM(train_data):
         #encoder_inputs_,decoder_inputs_,decoder_targets_ = train_data[0],train_data[1],train_data[2]
@@ -296,11 +311,11 @@ def trainLSTM(train_data):
         batch_size = 5
         loss_track = []
 
-        max_batches = 301   #5001
+        max_batches = 5001   #5001
         batches_in_epoch = 100
         save_interval = 500
         saver = tf.train.Saver()
-        model_file = './LSTMModel'
+        model_file = './LSTMModel/LSTM'
         if not os.path.isdir(model_file):
             os.makedirs(model_file)
      
@@ -331,24 +346,44 @@ def trainLSTM(train_data):
                     print()
         except KeyboardInterrupt:
             print('training interrupted')
-            
-        return sess    
-     
-def predict(model,sess_lstm):
-	
-	
-	
-	model.predict(sess_lstm)
-	'''
-    z_f = sample_normal(z_avg, z_log_var)
-    gan_sess = tf.Session()
-    checkpoint_dir = "output/cvaegan/checkpoints/"
-    latest_cp = tf.train.latest_checkpoint(checkpoint_dir)
-    print(latest_cp)
-    self.saver.restore(self.sess, latest_cp)
-    '''
-    pass            
-         
+        
+        
+        #-----------predict---------------------
+        z_p = np.random.uniform(-1, 1, size=(1, 256)) #batchsize = 1 (1,256)
+        #z_p = np.reshape(z_p,(1,1,256))
+        
+        #-----format transform------------------
+        z_zero = np.zeros((99,256))
+        encoder_inputs_ =  np.concatenate([z_p, z_zero], axis=0) #(100,256)
+        encoder_inputs_ = np.reshape(encoder_inputs_,(100,1,256))
+       
+        decoder_inputs_ = np.concatenate([np.ones((1,256),dtype=np.float32), z_p], axis=0)
+        decoder_inputs_ = np.concatenate([decoder_inputs_, np.zeros((98,256),dtype=np.float32)], axis=0) #(100,256)
+        decoder_inputs_ = np.reshape(decoder_inputs_,(100,1,256))
+        
+        print('encoder_inputs_',encoder_inputs_.shape)
+        print('decoder_inputs_',decoder_inputs_.shape)
+        #time major (100,1,256)
+         #run lstm
+        decoder_outputs = sess.run(decoder_outputs,feed_dict={encoder_inputs:encoder_inputs_,decoder_inputs:decoder_inputs_})
+        #print('decoder_outputs',decoder_outputs.shape)
+        # decoder_outputs (1,1,256)
+        decoder_outputs = tf.squeeze(decoder_outputs) #(101,256)    
+        return decoder_outputs    
+  
+
+  
+  
+def create_gif(dir_path, gif_name):  
+  
+    images = os.listdir(dir_path)
+    frames = []  
+    for image_name in images:  
+        frames.append(imageio.imread(dir_path+ image_name))  
+    # Save them as frames into a gif   
+    imageio.mimsave(gif_name, frames, 'GIF', duration = 0.1)  
+    
+    return      
 #--------------------------------------------------
 
 
@@ -383,7 +418,8 @@ def main(_):
         datasets = svhn.load_data()
     else:
         #datasets = load_data(args.dataset, args.datasize)
-        datasets =load_images(args.dataset)  # load
+        #datasets =load_images(args.dataset)  # load
+        datasets = load_data_from_npy()
         
          
     # Construct model
@@ -414,12 +450,17 @@ def main(_):
     print("datasets.images",datasets.images.shape)
     
     image_z = model.get_image_z(datasets)
+    
     image_z = np.load("image_z.npy")
-    #train_data = reshape(image_z)
+    train_data = reshape(image_z)
     #get_batch(train_data)
     #batch = get_batch(train_data)
-    sess_lstm = trainLSTM(train_data)
+    decoder_outputs = trainLSTM(train_data)  #train and predict
     #print("batch.shape", batch.shape)
-    model.predict(sess_lstm)
+    print("decoder_outputs",decoder_outputs.shape)
+    model.predict_images(decoder_outputs)
+    
+    
+    create_gif("video/",'test1.gif')
 if __name__ == '__main__':
     tf.app.run(main)
